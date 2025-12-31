@@ -1,0 +1,23 @@
+.DS_Store
+
+# Go build/test outputs
+*.exe
+*.exe~
+*.dll
+*.so
+*.dylib
+*.test
+*.out
+
+# Go workspaces
+go.work
+go.work.sum
+
+# Editors
+.idea/
+.vscode/
+
+# Local env
+.env
+
+
