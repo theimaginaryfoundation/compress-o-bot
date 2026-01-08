@@ -41,31 +41,6 @@ func main() {
 	fmt.Fprintf(os.Stdout, "threads_written=%d bytes_written=%d out_dir=%s\n", res.ThreadsWritten, res.BytesWritten, cfg.OutputDir)
 }
 
-type Config struct {
-	InputPath  string
-	OutputDir  string
-	ArrayField string
-	Pretty     bool
-	Overwrite  bool
-}
-
-func (c Config) Validate() error {
-	if c.InputPath == "" {
-		return fmt.Errorf("missing -in")
-	}
-	if c.OutputDir == "" {
-		return fmt.Errorf("missing -out")
-	}
-	return nil
-}
-
-func defaultConfig() Config {
-	return Config{
-		InputPath: filepath.FromSlash("docs/peanut-gallery/conversations.json"),
-		OutputDir: filepath.FromSlash("docs/peanut-gallery/threads"),
-	}
-}
-
 func parseFlags(fs *flag.FlagSet, args []string) (Config, error) {
 	cfg := defaultConfig()
 

@@ -419,6 +419,17 @@ func simplifyMessage(m rawMessage) (SimplifiedMessage, bool) {
 		URL:         extra.URL,
 	}
 
+	// Drop "imagey" tool messages that carry no useful text/URL metadata.
+	// In OpenAI exports these often show up as role=tool with content_type like "image" (or similar),
+	// but parts are non-string and the result is just noise for text summarization.
+	if sm.Role == "tool" &&
+		strings.TrimSpace(sm.Text) == "" &&
+		strings.TrimSpace(sm.Title) == "" &&
+		strings.TrimSpace(sm.URL) == "" &&
+		isImageLikeContentType(sm.ContentType) {
+		return SimplifiedMessage{}, false
+	}
+
 	// If there's no usable content at all, skip.
 	if strings.TrimSpace(sm.Text) == "" && sm.ContentType == "" && sm.URL == "" && sm.Title == "" {
 		return SimplifiedMessage{}, false
@@ -484,6 +495,16 @@ func isHiddenFromConversation(metadata map[string]any) bool {
 	}
 	b, ok := v.(bool)
 	return ok && b
+}
+
+func isImageLikeContentType(ct string) bool {
+	ct = strings.ToLower(strings.TrimSpace(ct))
+	if ct == "" {
+		return false
+	}
+	// Keep common useful tool types like tether_quote (handled by the caller condition anyway),
+	// but specifically treat "image" typed tool outputs as low-signal when they have no text/url/title.
+	return strings.Contains(ct, "image")
 }
 
 func sanitizeFilenameComponent(s string) string {

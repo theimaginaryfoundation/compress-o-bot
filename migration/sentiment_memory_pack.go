@@ -71,7 +71,7 @@ func WriteSentimentMemoryShards(threadSummaries []ThreadSentimentSummary, opts M
 			return nil
 		}
 		if currFilename == "" {
-			currFilename = shardName(shardNum)
+			currFilename = sentimentShardName(shardNum)
 		}
 		outPath := filepath.Join(opts.OutDir, currFilename)
 		if !opts.Overwrite {
@@ -103,7 +103,7 @@ func WriteSentimentMemoryShards(threadSummaries []ThreadSentimentSummary, opts M
 		}
 
 		if currBytes == 0 {
-			currFilename = shardName(shardNum)
+			currFilename = sentimentShardName(shardNum)
 			header := fmt.Sprintf("# Sentiment Memory Shard %04d\n\n", shardNum)
 			curr.WriteString(header)
 			currBytes += len([]byte(header))
@@ -134,6 +134,10 @@ func WriteSentimentMemoryShards(threadSummaries []ThreadSentimentSummary, opts M
 		return nil, err
 	}
 	return index, nil
+}
+
+func sentimentShardName(n int) string {
+	return fmt.Sprintf("sentiment_memories_%04d.md", n)
 }
 
 func renderThreadSentimentMarkdown(ts ThreadSentimentSummary) (section string, anchor string) {

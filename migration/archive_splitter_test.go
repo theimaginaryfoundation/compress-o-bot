@@ -141,6 +141,32 @@ func TestSplitConversationArchive_ToolTetherQuoteKept(t *testing.T) {
 	}
 }
 
+func TestSplitConversationArchive_DropsImageyEmptyToolMessage(t *testing.T) {
+	t.Parallel()
+
+	// Tool message has image-like content_type, but no string parts/text/url/title.
+	// We should drop it to avoid polluting the simplified transcript with noise.
+	in := `[{"conversation_id":"c1","id":"c1","current_node":"tool","mapping":{"u":{"id":"u","message":{"author":{"role":"user","name":null},"create_time":1,"content":{"content_type":"text","parts":["make an image"]},"metadata":{}},"parent":null,"children":["tool"]},"tool":{"id":"tool","message":{"author":{"role":"tool","name":"dalle"},"create_time":2,"content":{"content_type":"image","parts":[{"asset_pointer":"file-service://abc"}]},"metadata":{}},"parent":"u","children":[]}}}]`
+	inPath := filepath.Join(t.TempDir(), "in.json")
+	if err := os.WriteFile(inPath, []byte(in), 0o644); err != nil {
+		t.Fatalf("write input: %v", err)
+	}
+
+	outDir := filepath.Join(t.TempDir(), "out")
+	_, err := SplitConversationArchive(context.Background(), inPath, outDir, SplitOptions{})
+	if err != nil {
+		t.Fatalf("SplitConversationArchive: %v", err)
+	}
+
+	c1 := readSimplifiedConversation(t, filepath.Join(outDir, "c1.json"))
+	if len(c1.Messages) != 1 {
+		t.Fatalf("len(Messages)=%d, want 1", len(c1.Messages))
+	}
+	if c1.Messages[0].Role != "user" {
+		t.Fatalf("msg0=%+v, want role=user", c1.Messages[0])
+	}
+}
+
 func TestSanitizeFilenameComponent(t *testing.T) {
 	t.Parallel()
 

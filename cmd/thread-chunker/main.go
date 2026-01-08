@@ -6,7 +6,6 @@ import (
 	"errors"
 	"flag"
 	"fmt"
-	"io"
 	"io/fs"
 	"os"
 	"os/signal"
@@ -15,14 +14,14 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/invopop/jsonschema"
 	"github.com/openai/openai-go"
 	"github.com/openai/openai-go/option"
 	"github.com/openai/openai-go/responses"
 	"github.com/theimaginaryfoundation/compress-o-bot/migration"
+	"github.com/theimaginaryfoundation/compress-o-bot/migration/fileutils"
+	"github.com/theimaginaryfoundation/compress-o-bot/migration/provider"
 )
 
-// NOTE TO SELF -- add ISO 8601 date to the output files!! maybe month:year fields too for even easier search
 func main() {
 	cfg, err := parseFlags(flag.CommandLine, os.Args[1:])
 	if err != nil {
@@ -62,8 +61,9 @@ func main() {
 		os.Exit(2)
 	}
 
+	start := time.Now()
 	var allWritten []string
-	for _, inFile := range inputFiles {
+	for i, inFile := range inputFiles {
 		// To avoid filename collisions across threads (same thread_start_time), create a per-thread subdir.
 		threadSubdir := filepath.Join(cfg.OutputDir, strings.TrimSuffix(filepath.Base(inFile), filepath.Ext(inFile)))
 
@@ -77,46 +77,15 @@ func main() {
 			os.Exit(1)
 		}
 		allWritten = append(allWritten, written...)
+
+		// Progress logging: this can take a long time and is otherwise mostly silent.
+		fmt.Fprintf(os.Stderr, "progress thread-chunker: %d/%d threads chunked (last=%s chunks=%d elapsed=%s)\n",
+			i+1, len(inputFiles), filepath.Base(inFile), len(written), time.Since(start).Round(time.Second))
 	}
 
 	fmt.Fprintf(os.Stdout, "threads_processed=%d chunks_written=%d out_dir=%s\n", len(inputFiles), len(allWritten), cfg.OutputDir)
 	for _, p := range allWritten {
 		fmt.Fprintln(os.Stdout, p)
-	}
-}
-
-type Config struct {
-	InputPath   string
-	OutputDir   string
-	Model       string
-	TargetTurns int
-	Pretty      bool
-	Overwrite   bool
-	APIKey      string
-}
-
-func (c Config) Validate() error {
-	if c.InputPath == "" {
-		return errors.New("missing -in")
-	}
-	if c.OutputDir == "" {
-		return errors.New("missing -out")
-	}
-	if c.Model == "" {
-		return errors.New("missing -model")
-	}
-	if c.TargetTurns <= 0 {
-		return errors.New("target turns must be > 0")
-	}
-	return nil
-}
-
-func defaultConfig() Config {
-	return Config{
-		InputPath:   "",
-		OutputDir:   filepath.FromSlash("docs/peanut-gallery/threads/chunks"),
-		Model:       "gpt-5-mini",
-		TargetTurns: 20,
 	}
 }
 
@@ -226,7 +195,7 @@ type breakpointResponse struct {
 	Breakpoints []int `json:"breakpoints"`
 }
 
-var breakpointSchema = generateSchema[breakpointResponse]()
+var breakpointSchema = provider.GenerateSchema[breakpointResponse]()
 
 func (d openAIBreakpointDecider) DecideBreakpoints(ctx context.Context, thread migration.SimplifiedConversation, turns []migration.Turn, targetTurnsPerChunk int) ([]int, error) {
 	if d.client == nil {
@@ -268,46 +237,18 @@ func (d openAIBreakpointDecider) DecideBreakpoints(ctx context.Context, thread m
 		},
 	}
 
-	resp, err := callWithRetry(ctx, d.client, params)
+	resp, err := provider.CallWithRetry(ctx, d.client, params)
 	if err != nil {
 		return nil, err
 	}
 
 	var out breakpointResponse
-	if err := decodeModelJSON(resp.OutputText(), &out); err != nil {
+	if err := fileutils.DecodeModelJSON(resp.OutputText(), &out); err != nil {
 		// If the model output is truncated/invalid, fall back to deterministic breakpoints so the pipeline keeps moving.
 		// This will typically produce ~targetTurnsPerChunk chunks.
 		return fallbackBreakpoints(len(turns), targetTurnsPerChunk), nil
 	}
 	return out.Breakpoints, nil
-}
-
-const chunkBreakpointsPrompt = `You are a conversation segmentation assistant.
-
-You will be given a JSON payload describing a conversation as a list of "turns".
-A "turn" starts at a user message and includes any assistant/tool messages until the next user message.
-
-Goal: return breakpoints (turn indices) where a NEW chunk should start, producing chunks that are:
-- roughly target_turns_per_chunk turns each (15-25 is fine),
-- aligned to complete "conversation loops" / topic boundaries when possible,
-- not splitting in the middle of a coherent sub-task,
-- using as few chunks as reasonable.
-
-Rules:
-- breakpoints must be strictly increasing integers
-- each breakpoint must satisfy 1 <= breakpoint < total_turns
-- DO NOT include 0
-- If the thread is short, return an empty array.
-
-Return only JSON matching the schema.`
-
-func truncate(s string, max int) string {
-	s = strings.TrimSpace(s)
-	if max <= 0 || len(s) <= max {
-		return s
-	}
-	// Keep it readable: cut at rune boundary-ish (ASCII is fine here; most content is ASCII).
-	return s[:max] + "…"
 }
 
 func buildBreakpointRequestPayload(thread migration.SimplifiedConversation, turns []migration.Turn, targetTurnsPerChunk int) ([]byte, error) {
@@ -343,8 +284,8 @@ func buildBreakpointRequest(thread migration.SimplifiedConversation, turns []mig
 			StartTime: t.StartTime,
 		}
 		if includeText {
-			td.User = truncate(t.UserText, 400)
-			td.Assistant = truncate(t.AssistantText, 600)
+			td.User = fileutils.Truncate(t.UserText, 400)
+			td.Assistant = fileutils.Truncate(t.AssistantText, 600)
 		}
 		req.Turns = append(req.Turns, td)
 	}
@@ -360,142 +301,4 @@ func fallbackBreakpoints(totalTurns int, targetTurnsPerChunk int) []int {
 		bps = append(bps, i)
 	}
 	return bps
-}
-
-func decodeModelJSON(outputText string, v any) error {
-	s := strings.TrimSpace(outputText)
-	if s == "" {
-		return io.ErrUnexpectedEOF
-	}
-
-	if err := json.Unmarshal([]byte(s), v); err == nil {
-		return nil
-	}
-
-	start := strings.IndexByte(s, '{')
-	end := strings.LastIndexByte(s, '}')
-	if start == -1 || end == -1 || end <= start {
-		return fmt.Errorf("no JSON object found in model output (len=%d)", len(s))
-	}
-	sub := s[start : end+1]
-	if err := json.Unmarshal([]byte(sub), v); err != nil {
-		return fmt.Errorf("failed to unmarshal extracted JSON (len=%d): %w", len(sub), err)
-	}
-	return nil
-}
-
-func callWithRetry(ctx context.Context, client *openai.Client, params responses.ResponseNewParams) (*responses.Response, error) {
-	const maxRetries = 3
-	rateLimitWaitTimes := []time.Duration{65 * time.Second, 100 * time.Second, 135 * time.Second}
-	serverErrorWaitTimes := []time.Duration{5 * time.Second, 30 * time.Second, 60 * time.Second}
-
-	for attempt := 0; attempt < maxRetries; attempt++ {
-		resp, err := client.Responses.New(ctx, params)
-		if err != nil {
-			if isRateLimitError(err) {
-				if attempt < maxRetries-1 {
-					time.Sleep(rateLimitWaitTimes[attempt])
-					continue
-				}
-			} else if isServerError(err) {
-				if attempt < maxRetries-1 {
-					time.Sleep(serverErrorWaitTimes[attempt])
-					continue
-				}
-			}
-			return nil, err
-		}
-		return resp, nil
-	}
-	return nil, fmt.Errorf("failed after %d attempts due to OpenAI API issues", maxRetries)
-}
-
-func isRateLimitError(err error) bool {
-	if err == nil {
-		return false
-	}
-	errStr := strings.ToLower(err.Error())
-	return strings.Contains(errStr, "429") ||
-		strings.Contains(errStr, "rate limit") ||
-		strings.Contains(errStr, "too many requests")
-}
-
-func isServerError(err error) bool {
-	if err == nil {
-		return false
-	}
-	errStr := strings.ToLower(err.Error())
-	return strings.Contains(errStr, "500") ||
-		strings.Contains(errStr, "internal server error") ||
-		strings.Contains(errStr, "server_error")
-}
-
-// generateSchema is a small local copy of our structured-output JSON schema helper
-// (compatible with OpenAI Structured Outputs' JSON schema subset).
-func generateSchema[T any]() map[string]interface{} {
-	reflector := jsonschema.Reflector{
-		AllowAdditionalProperties:  false,
-		DoNotReference:             true,
-		RequiredFromJSONSchemaTags: true,
-	}
-	var v T
-	schema := reflector.Reflect(v)
-	schemaObj, err := schemaToMap(schema)
-	if err != nil {
-		panic(err)
-	}
-	ensureOpenAICompliance(schemaObj)
-	return schemaObj
-}
-
-func schemaToMap(schema *jsonschema.Schema) (map[string]interface{}, error) {
-	b, err := schema.MarshalJSON()
-	if err != nil {
-		return nil, err
-	}
-	var m map[string]interface{}
-	if err := json.Unmarshal(b, &m); err != nil {
-		return nil, err
-	}
-	return m, nil
-}
-
-const (
-	propertiesKey           = "properties"
-	additionalPropertiesKey = "additionalProperties"
-	typeKey                 = "type"
-	requiredKey             = "required"
-	itemsKey                = "items"
-)
-
-func ensureOpenAICompliance(schema map[string]interface{}) {
-	if schemaType, ok := schema[typeKey].(string); ok && schemaType == "object" {
-		schema[additionalPropertiesKey] = false
-
-		if properties, ok := schema[propertiesKey].(map[string]interface{}); ok {
-			var requiredFields []string
-			for propName := range properties {
-				requiredFields = append(requiredFields, propName)
-			}
-			if len(requiredFields) > 0 {
-				schema[requiredKey] = requiredFields
-			}
-		}
-	}
-
-	if properties, ok := schema[propertiesKey].(map[string]interface{}); ok {
-		for _, prop := range properties {
-			if propMap, ok := prop.(map[string]interface{}); ok {
-				ensureOpenAICompliance(propMap)
-			}
-		}
-	}
-
-	if items, ok := schema[itemsKey].(map[string]interface{}); ok {
-		ensureOpenAICompliance(items)
-	}
-
-	if additionalProps, ok := schema[additionalPropertiesKey].(map[string]interface{}); ok {
-		ensureOpenAICompliance(additionalProps)
-	}
 }

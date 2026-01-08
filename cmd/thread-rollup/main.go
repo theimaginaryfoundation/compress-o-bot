@@ -25,6 +25,7 @@ import (
 	"github.com/openai/openai-go/option"
 	"github.com/openai/openai-go/responses"
 	"github.com/theimaginaryfoundation/compress-o-bot/migration"
+	"github.com/theimaginaryfoundation/compress-o-bot/migration/fileutils"
 )
 
 func main() {
@@ -129,12 +130,17 @@ func main() {
 	}
 	sort.Strings(threadIDs)
 
+	start := time.Now()
+	totalThreads := int64(len(threadIDs))
+
 	var processed int64
 	if err := forEachThreadIDConcurrent(ctx, cfg.Concurrency, threadIDs, func(ctx context.Context, threadID string) error {
 		if err := processThreadRollup(ctx, cfg, threadID, byThread, byThreadSent, rolluper, sentRolluper, glossaryExcerpt); err != nil {
 			return err
 		}
-		atomic.AddInt64(&processed, 1)
+		n := atomic.AddInt64(&processed, 1)
+		fmt.Fprintf(os.Stderr, "progress thread-rollup: %d/%d threads rolled up (last=%s elapsed=%s)\n",
+			n, totalThreads, threadID, time.Since(start).Round(time.Second))
 		return nil
 	}); err != nil {
 		fmt.Fprintln(os.Stderr, err.Error())
@@ -216,7 +222,7 @@ func writeThreadSummaryWithOptionalSplit(
 		if err != nil {
 			return fmt.Errorf("failed rollup %s: %w", threadID, err)
 		}
-		return writeJSONFileAtomic(finalOutPath, roll, cfg.Pretty)
+		return fileutils.WriteJSONFileAtomic(finalOutPath, roll, cfg.Pretty)
 	}
 
 	parts := chunkWindows(chunks, cfg.MaxChunksPerThread)
@@ -233,7 +239,7 @@ func writeThreadSummaryWithOptionalSplit(
 			if err != nil {
 				return fmt.Errorf("failed rollup part %s part=%d/%d: %w", threadID, i+1, len(parts), err)
 			}
-			if err := writeJSONFileAtomic(partPath, partRoll, cfg.Pretty); err != nil {
+			if err := fileutils.WriteJSONFileAtomic(partPath, partRoll, cfg.Pretty); err != nil {
 				return err
 			}
 			partSummaries = append(partSummaries, partRoll)
@@ -250,7 +256,7 @@ func writeThreadSummaryWithOptionalSplit(
 	if err != nil {
 		return fmt.Errorf("failed rollup merge %s: %w", threadID, err)
 	}
-	return writeJSONFileAtomic(finalOutPath, merged, cfg.Pretty)
+	return fileutils.WriteJSONFileAtomic(finalOutPath, merged, cfg.Pretty)
 }
 
 func writeThreadSentimentSummaryWithOptionalSplit(
@@ -267,7 +273,7 @@ func writeThreadSentimentSummaryWithOptionalSplit(
 		if err != nil {
 			return fmt.Errorf("failed sentiment rollup %s: %w", threadID, err)
 		}
-		return writeJSONFileAtomic(finalOutPath, roll, cfg.Pretty)
+		return fileutils.WriteJSONFileAtomic(finalOutPath, roll, cfg.Pretty)
 	}
 
 	parts := chunkWindows(chunks, cfg.MaxChunksPerThread)
@@ -284,7 +290,7 @@ func writeThreadSentimentSummaryWithOptionalSplit(
 			if err != nil {
 				return fmt.Errorf("failed sentiment rollup part %s part=%d/%d: %w", threadID, i+1, len(parts), err)
 			}
-			if err := writeJSONFileAtomic(partPath, partRoll, cfg.Pretty); err != nil {
+			if err := fileutils.WriteJSONFileAtomic(partPath, partRoll, cfg.Pretty); err != nil {
 				return err
 			}
 			partSummaries = append(partSummaries, partRoll)
@@ -301,7 +307,7 @@ func writeThreadSentimentSummaryWithOptionalSplit(
 	if err != nil {
 		return fmt.Errorf("failed sentiment rollup merge %s: %w", threadID, err)
 	}
-	return writeJSONFileAtomic(finalOutPath, merged, cfg.Pretty)
+	return fileutils.WriteJSONFileAtomic(finalOutPath, merged, cfg.Pretty)
 }
 
 func semanticPartOutPath(outDir, threadID string, partNum int, total int) string {
@@ -310,23 +316,6 @@ func semanticPartOutPath(outDir, threadID string, partNum int, total int) string
 
 func sentimentPartOutPath(outDir, threadID string, partNum int, total int) string {
 	return filepath.Join(outDir, fmt.Sprintf("%s.thread.sentiment.summary.part%02dof%02d.json", threadID, partNum, total))
-}
-
-func writeJSONFileAtomic(path string, v any, pretty bool) error {
-	var b []byte
-	var err error
-	if pretty {
-		b, err = json.MarshalIndent(v, "", "  ")
-	} else {
-		b, err = json.Marshal(v)
-	}
-	if err != nil {
-		return fmt.Errorf("marshal json: %w", err)
-	}
-	if err := writeFileAtomicSameDir(path, b, 0o644); err != nil {
-		return fmt.Errorf("write json: %w", err)
-	}
-	return nil
 }
 
 func readThreadSummaryFile(path string) (migration.ThreadSummary, error) {
@@ -466,7 +455,7 @@ func rebuildSemanticThreadIndex(cfg Config, indexPath string) error {
 			continue
 		}
 		rec := migration.BuildThreadIndexRecord(ts, p)
-		rec.Summary = truncateLimit(rec.Summary, cfg.IndexSummaryMaxChars)
+		rec.Summary = fileutils.Truncate(rec.Summary, cfg.IndexSummaryMaxChars)
 		rec.Tags = limitSlice(rec.Tags, cfg.IndexTagsMax)
 		rec.Terms = limitSlice(rec.Terms, cfg.IndexTermsMax)
 		line, err := json.Marshal(rec)
@@ -519,7 +508,7 @@ func rebuildSentimentThreadIndex(cfg Config, sentimentIndexPath string) error {
 			continue
 		}
 		rec := migration.BuildThreadSentimentIndexRecord(ts, p)
-		rec.EmotionalSummary = truncateLimit(rec.EmotionalSummary, cfg.IndexSummaryMaxChars)
+		rec.EmotionalSummary = fileutils.Truncate(rec.EmotionalSummary, cfg.IndexSummaryMaxChars)
 		rec.DominantEmotions = limitSlice(rec.DominantEmotions, cfg.IndexTermsMax)
 		rec.RememberedEmotions = limitSlice(rec.RememberedEmotions, cfg.IndexTermsMax)
 		rec.PresentEmotions = limitSlice(rec.PresentEmotions, cfg.IndexTermsMax)
@@ -536,84 +525,11 @@ func rebuildSentimentThreadIndex(cfg Config, sentimentIndexPath string) error {
 	return w.Flush()
 }
 
-func truncateLimit(s string, max int) string {
-	s = strings.TrimSpace(s)
-	if max <= 0 || len(s) <= max {
-		return s
-	}
-	return s[:max] + "…"
-}
-
 func limitSlice(in []string, max int) []string {
 	if max <= 0 || len(in) <= max {
 		return in
 	}
 	return in[:max]
-}
-
-type Config struct {
-	InPath               string
-	OutDir               string
-	Model                string
-	Pretty               bool
-	Overwrite            bool
-	APIKey               string
-	IndexPath            string
-	GlossaryPath         string
-	GlossaryMaxTerms     int
-	SentimentOutDir      string
-	SentimentIndexPath   string
-	SentimentModel       string
-	Resume               bool
-	Reindex              bool
-	Concurrency          int
-	MaxChunksPerThread   int
-	IndexSummaryMaxChars int
-	IndexTagsMax         int
-	IndexTermsMax        int
-}
-
-func (c Config) Validate() error {
-	if c.InPath == "" {
-		return errors.New("missing -in")
-	}
-	if c.OutDir == "" {
-		return errors.New("missing -out")
-	}
-	if c.Model == "" {
-		return errors.New("missing -model")
-	}
-	if c.GlossaryMaxTerms < 0 {
-		return errors.New("glossary-max-terms must be >= 0")
-	}
-	if c.Concurrency < 0 {
-		return errors.New("concurrency must be >= 0")
-	}
-	if c.MaxChunksPerThread < 0 {
-		return errors.New("max-chunks-per-thread must be >= 0")
-	}
-	if c.IndexSummaryMaxChars < 0 || c.IndexTagsMax < 0 || c.IndexTermsMax < 0 {
-		return errors.New("index limits must be >= 0")
-	}
-	return nil
-}
-
-func defaultConfig() Config {
-	return Config{
-		InPath:               filepath.FromSlash("docs/peanut-gallery/threads/summaries"),
-		OutDir:               filepath.FromSlash("docs/peanut-gallery/threads/thread_summaries"),
-		Model:                "gpt-5-mini",
-		GlossaryMaxTerms:     60,
-		SentimentOutDir:      filepath.FromSlash("docs/peanut-gallery/threads/thread_sentiment_summaries"),
-		SentimentModel:       "gpt-5-mini",
-		Resume:               true,
-		Reindex:              true,
-		Concurrency:          6,
-		MaxChunksPerThread:   5,
-		IndexSummaryMaxChars: 600,
-		IndexTagsMax:         5,
-		IndexTermsMax:        15,
-	}
 }
 
 func parseFlags(fs *flag.FlagSet, args []string) (Config, error) {
@@ -893,7 +809,7 @@ func (r openAIThreadRolluper) Rollup(ctx context.Context, conversationID string,
 			if attempt == 0 && isRecoverableModelJSONError(err) {
 				continue
 			}
-			return migration.ThreadSummary{}, fmt.Errorf("unmarshal rollup: %w (model_output_prefix=%q)", err, truncateLimit(lastOut, 500))
+			return migration.ThreadSummary{}, fmt.Errorf("unmarshal rollup: %w (model_output_prefix=%q)", err, fileutils.Truncate(lastOut, 500))
 		}
 		break
 	}
@@ -968,7 +884,7 @@ func (r openAIThreadRolluper) RollupFromThreadSummaries(ctx context.Context, con
 			if attempt == 0 && isRecoverableModelJSONError(err) {
 				continue
 			}
-			return migration.ThreadSummary{}, fmt.Errorf("unmarshal rollup merge: %w (model_output_prefix=%q)", err, truncateLimit(lastOut, 500))
+			return migration.ThreadSummary{}, fmt.Errorf("unmarshal rollup merge: %w (model_output_prefix=%q)", err, fileutils.Truncate(lastOut, 500))
 		}
 		break
 	}
@@ -1048,7 +964,7 @@ func (r openAIThreadSentimentRolluper) Rollup(ctx context.Context, conversationI
 			if attempt == 0 && isRecoverableModelJSONError(err) {
 				continue
 			}
-			return migration.ThreadSentimentSummary{}, fmt.Errorf("unmarshal sentiment rollup: %w (model_output_prefix=%q)", err, truncateLimit(lastOut, 500))
+			return migration.ThreadSentimentSummary{}, fmt.Errorf("unmarshal sentiment rollup: %w (model_output_prefix=%q)", err, fileutils.Truncate(lastOut, 500))
 		}
 		break
 	}
@@ -1130,7 +1046,7 @@ func (r openAIThreadSentimentRolluper) RollupFromThreadSentimentSummaries(ctx co
 			if attempt == 0 && isRecoverableModelJSONError(err) {
 				continue
 			}
-			return migration.ThreadSentimentSummary{}, fmt.Errorf("unmarshal sentiment rollup merge: %w (model_output_prefix=%q)", err, truncateLimit(lastOut, 500))
+			return migration.ThreadSentimentSummary{}, fmt.Errorf("unmarshal sentiment rollup merge: %w (model_output_prefix=%q)", err, fileutils.Truncate(lastOut, 500))
 		}
 		break
 	}

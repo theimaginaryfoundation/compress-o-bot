@@ -2,15 +2,15 @@ package main
 
 import (
 	"context"
-	"errors"
 	"flag"
 	"fmt"
-	"io/fs"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"strings"
 	"time"
+
+	"github.com/theimaginaryfoundation/compress-o-bot/migration/fileutils"
 )
 
 func main() {
@@ -184,7 +184,7 @@ func main() {
 			glossarySrc := filepath.Join(summariesDir, "glossary.json")
 			for _, dstDir := range []string{semanticShardsDir, sentimentShardsDir} {
 				dst := filepath.Join(dstDir, "glossary.json")
-				copied, err := copyFileIfExists(glossarySrc, dst, cfg.Overwrite)
+				copied, err := fileutils.CopyFileIfExists(glossarySrc, dst, cfg.Overwrite)
 				if err != nil {
 					fmt.Fprintln(os.Stderr, "failed copying glossary:", err.Error())
 					os.Exit(1)
@@ -227,53 +227,6 @@ type Config struct {
 	SentimentPromptFile string
 }
 
-func (c Config) Validate() error {
-	if c.ConversationsPath == "" {
-		return errors.New("missing -conversations")
-	}
-	if c.BaseDir == "" {
-		return errors.New("missing -base-dir")
-	}
-	if c.Model == "" {
-		return errors.New("missing -model")
-	}
-	if c.TargetTurns <= 0 {
-		return errors.New("target-turns must be > 0")
-	}
-	if c.Concurrency < 0 || c.BatchSize < 0 || c.MaxChunks < 0 {
-		return errors.New("concurrency/batch-size/max-chunks must be >= 0")
-	}
-	if c.MaxShardBytes <= 0 {
-		return errors.New("max-shard-bytes must be > 0")
-	}
-	if c.IndexSummaryMaxChars < 0 || c.IndexTagsMax < 0 || c.IndexTermsMax < 0 {
-		return errors.New("index limits must be >= 0")
-	}
-	if c.OnlyStage != "" && c.FromStage != "" {
-		return errors.New("use only one of -only-stage or -from-stage")
-	}
-	return nil
-}
-
-func defaultConfig() Config {
-	return Config{
-		ConversationsPath:    filepath.FromSlash("docs/peanut-gallery/conversations.json"),
-		BaseDir:              filepath.FromSlash("docs/peanut-gallery"),
-		Model:                "gpt-5-mini",
-		SentimentModel:       "",
-		TargetTurns:          20,
-		Concurrency:          6,
-		BatchSize:            25,
-		MaxChunks:            0,
-		MaxShardBytes:        100 * 1024,
-		IndexSummaryMaxChars: 600,
-		IndexTagsMax:         5,
-		IndexTermsMax:        15,
-		Pretty:               false,
-		Overwrite:            false,
-	}
-}
-
 func parseFlags(fs *flag.FlagSet, args []string) (Config, error) {
 	cfg := defaultConfig()
 	fs.SetOutput(os.Stderr)
@@ -311,59 +264,6 @@ func parseFlags(fs *flag.FlagSet, args []string) (Config, error) {
 		cfg.SentimentPromptFile = filepath.Clean(cfg.SentimentPromptFile)
 	}
 	return cfg, nil
-}
-
-func copyFileIfExists(srcPath, dstPath string, overwrite bool) (bool, error) {
-	if srcPath == "" || dstPath == "" {
-		return false, errors.New("copyFileIfExists: empty path")
-	}
-
-	if _, err := os.Stat(srcPath); err != nil {
-		if errors.Is(err, fs.ErrNotExist) {
-			return false, nil
-		}
-		return false, err
-	}
-
-	if !overwrite {
-		if _, err := os.Stat(dstPath); err == nil {
-			return false, nil
-		} else if !errors.Is(err, fs.ErrNotExist) {
-			return false, err
-		}
-	}
-
-	b, err := os.ReadFile(srcPath)
-	if err != nil {
-		return false, err
-	}
-
-	if err := os.MkdirAll(filepath.Dir(dstPath), 0o755); err != nil {
-		return false, err
-	}
-
-	tmp, err := os.CreateTemp(filepath.Dir(dstPath), ".tmp_copy_*")
-	if err != nil {
-		return false, err
-	}
-	tmpName := tmp.Name()
-	defer func() { _ = os.Remove(tmpName) }()
-
-	if _, err := tmp.Write(b); err != nil {
-		_ = tmp.Close()
-		return false, err
-	}
-	if err := tmp.Sync(); err != nil {
-		_ = tmp.Close()
-		return false, err
-	}
-	if err := tmp.Close(); err != nil {
-		return false, err
-	}
-	if err := os.Rename(tmpName, dstPath); err != nil {
-		return false, err
-	}
-	return true, nil
 }
 
 func runGo(ctx context.Context, args ...string) error {
