@@ -1,4 +1,6 @@
 # compress-o-bot
+<img width="1024" height="1024" alt="ChatGPT Image Sep 20, 2025, 09_16_19 AM" src="https://github.com/user-attachments/assets/dfaa6900-31fc-4d10-b755-ef4726e99305" />
+
 ChatGPT/OpenAI conversation archive compressor.
 
 `compress-o-bot` turns an OpenAI export `conversations.json` into a compact, searchable “memory pack”:
@@ -99,3 +101,5 @@ go run ./cmd/memory-pack -mode sentiment  -in docs/peanut-gallery/threads/thread
 ### Notes
 - The AI stages are designed to be resumable; see each command’s flags (`-resume`, `-overwrite`, etc.).
 - For best results, run commands from the repo root so relative `./cmd/...` paths resolve.
+
+<img width="1024" height="1024" alt="ChatGPT Image Sep 20, 2025, 09_38_01 AM" src="https://github.com/user-attachments/assets/6aa839be-523f-4f9b-a1d6-7b4dfe6a1214" />
