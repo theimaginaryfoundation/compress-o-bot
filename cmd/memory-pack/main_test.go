@@ -17,7 +17,7 @@ func TestParseFlags_Overrides(t *testing.T) {
 	cfg, err := parseFlags(fs, []string{
 		"-in", "docs/peanut-gallery/threads/thread_summaries",
 		"-out", "docs/peanut-gallery/threads/memory_shards",
-		"-index", "x.jsonl",
+		"-index", "x.json",
 		"-max-bytes", "12345",
 		"-overwrite",
 		"-include-keypoints=false",
