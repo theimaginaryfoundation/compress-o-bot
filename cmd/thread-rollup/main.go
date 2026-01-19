@@ -98,11 +98,11 @@ func main() {
 
 	indexPath := cfg.IndexPath
 	if indexPath == "" {
-		indexPath = filepath.Join(cfg.OutDir, "thread_index.jsonl")
+		indexPath = filepath.Join(cfg.OutDir, "thread_index.json")
 	}
 	sentimentIndexPath := cfg.SentimentIndexPath
 	if sentimentIndexPath == "" && cfg.SentimentOutDir != "" {
-		sentimentIndexPath = filepath.Join(cfg.SentimentOutDir, "sentiment_thread_index.jsonl")
+		sentimentIndexPath = filepath.Join(cfg.SentimentOutDir, "sentiment_thread_index.json")
 	}
 
 	byThread, err := groupChunkSummaries(summaryFiles)
@@ -540,11 +540,11 @@ func parseFlags(fs *flag.FlagSet, args []string) (Config, error) {
 	fs.StringVar(&cfg.Model, "model", cfg.Model, "OpenAI model to use (e.g. gpt-5-mini)")
 	fs.BoolVar(&cfg.Pretty, "pretty", false, "Pretty-print thread summary JSON files")
 	fs.BoolVar(&cfg.Overwrite, "overwrite", false, "Overwrite existing thread summary JSON files")
-	fs.StringVar(&cfg.IndexPath, "index", "", "Optional path for thread_index.jsonl (default: <out>/thread_index.jsonl)")
+	fs.StringVar(&cfg.IndexPath, "index", "", "Optional path for thread_index.json (default: <out>/thread_index.json)")
 	fs.StringVar(&cfg.GlossaryPath, "glossary", "", "Optional glossary.json path (default: <in>/glossary.json)")
 	fs.IntVar(&cfg.GlossaryMaxTerms, "glossary-max-terms", cfg.GlossaryMaxTerms, "Max glossary terms to include in the prompt (0 disables)")
 	fs.StringVar(&cfg.SentimentOutDir, "sentiment-out", cfg.SentimentOutDir, "Output directory for per-thread sentiment summary JSON files (empty disables sentiment rollup)")
-	fs.StringVar(&cfg.SentimentIndexPath, "sentiment-index", "", "Optional path for sentiment_thread_index.jsonl (default: <sentiment-out>/sentiment_thread_index.jsonl)")
+	fs.StringVar(&cfg.SentimentIndexPath, "sentiment-index", "", "Optional path for sentiment_thread_index.json (default: <sentiment-out>/sentiment_thread_index.json)")
 	fs.StringVar(&cfg.SentimentModel, "sentiment-model", cfg.SentimentModel, "OpenAI model to use for sentiment rollup (e.g. gpt-5-mini)")
 	fs.BoolVar(&cfg.Resume, "resume", cfg.Resume, "Skip thread rollups that already have output files")
 	fs.BoolVar(&cfg.Reindex, "reindex", cfg.Reindex, "Rebuild thread index files from existing outputs at end of run")
