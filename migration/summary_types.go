@@ -56,7 +56,7 @@ type ThreadSummary struct {
 	Terms []string `json:"terms,omitempty"`
 }
 
-// ThreadIndexRecord is a row in thread_index.jsonl mapping a thread to its rollup file.
+// ThreadIndexRecord is a row in thread_index. mapping a thread to its rollup file.
 type ThreadIndexRecord struct {
 	ConversationID string   `json:"conversation_id"`
 	ThreadStart    *float64 `json:"thread_start_time,omitempty"`
@@ -69,7 +69,7 @@ type ThreadIndexRecord struct {
 	Terms   []string `json:"terms,omitempty"`
 }
 
-// IndexRecord is a single row in index.jsonl.
+// IndexRecord is a single row in index..
 type IndexRecord struct {
 	ConversationID string   `json:"conversation_id"`
 	ThreadStart    *float64 `json:"thread_start_time,omitempty"`
