@@ -47,9 +47,9 @@ func main() {
 	indexPath := cfg.IndexPath
 	if indexPath == "" {
 		if mode == "sentiment" {
-			indexPath = filepath.Join(cfg.OutDir, "sentiment_memory_index.jsonl")
+			indexPath = filepath.Join(cfg.OutDir, "sentiment_memory_index.json")
 		} else {
-			indexPath = filepath.Join(cfg.OutDir, "memory_index.jsonl")
+			indexPath = filepath.Join(cfg.OutDir, "memory_index.json")
 		}
 	}
 
@@ -185,7 +185,7 @@ func parseFlags(fs *flag.FlagSet, args []string) (Config, error) {
 	fs.SetOutput(os.Stderr)
 	fs.StringVar(&cfg.InPath, "in", cfg.InPath, "Path to thread summaries directory (mode-dependent, recursively)")
 	fs.StringVar(&cfg.OutDir, "out", cfg.OutDir, "Output directory for markdown shard files")
-	fs.StringVar(&cfg.IndexPath, "index", "", "Optional path for memory_index.jsonl (default: <out>/memory_index.jsonl)")
+	fs.StringVar(&cfg.IndexPath, "index", "", "Optional path for memory_index.json (default: <out>/memory_index.json)")
 	fs.IntVar(&cfg.MaxBytes, "max-bytes", cfg.MaxBytes, "Max UTF-8 bytes per markdown shard file (default ~100KB)")
 	fs.BoolVar(&cfg.Overwrite, "overwrite", false, "Overwrite existing shard/index files")
 	fs.BoolVar(&cfg.IncludeKeyPoints, "include-keypoints", cfg.IncludeKeyPoints, "Include key points section per thread")
