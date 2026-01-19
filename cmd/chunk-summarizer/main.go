@@ -76,11 +76,11 @@ func main() {
 	}
 	indexPath := cfg.IndexPath
 	if indexPath == "" {
-		indexPath = filepath.Join(cfg.OutDir, "index.jsonl")
+		indexPath = filepath.Join(cfg.OutDir, "index.json")
 	}
 	sentimentIndexPath := cfg.SentimentIndexPath
 	if sentimentIndexPath == "" {
-		sentimentIndexPath = filepath.Join(cfg.OutDir, "sentiment_index.jsonl")
+		sentimentIndexPath = filepath.Join(cfg.OutDir, "sentiment_index.json")
 	}
 
 	glossary, err := migration.LoadGlossary(glossaryPath)
@@ -283,8 +283,8 @@ func parseFlags(fs *flag.FlagSet, args []string) (Config, error) {
 	fs.StringVar(&cfg.SentimentPromptFile, "sentiment-prompt-file", "", "Optional path to a file containing a custom sentiment prompt header (prepended before required SECURITY+schema tail)")
 	fs.BoolVar(&cfg.Pretty, "pretty", false, "Pretty-print summary JSON files")
 	fs.BoolVar(&cfg.Overwrite, "overwrite", false, "Overwrite existing summary JSON files")
-	fs.StringVar(&cfg.IndexPath, "index", "", "Optional path for index.jsonl (default: <out>/index.jsonl)")
-	fs.StringVar(&cfg.SentimentIndexPath, "sentiment-index", "", "Optional path for sentiment_index.jsonl (default: <out>/sentiment_index.jsonl)")
+	fs.StringVar(&cfg.IndexPath, "index", "", "Optional path for index.json (default: <out>/index.json)")
+	fs.StringVar(&cfg.SentimentIndexPath, "sentiment-index", "", "Optional path for sentiment_index.json (default: <out>/sentiment_index.json)")
 	fs.StringVar(&cfg.GlossaryPath, "glossary", "", "Optional path for glossary.json (default: <out>/glossary.json)")
 	fs.IntVar(&cfg.GlossaryMaxTerms, "glossary-max-terms", cfg.GlossaryMaxTerms, "Max glossary terms to include in the prompt (0 disables)")
 	fs.IntVar(&cfg.GlossaryMinCount, "glossary-min-count", cfg.GlossaryMinCount, "Cull glossary terms with count < N at end of run (0 disables)")
