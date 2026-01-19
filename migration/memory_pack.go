@@ -39,7 +39,7 @@ type MemoryShardIndexRecord struct {
 	Terms   []string `json:"terms,omitempty"`
 }
 
-// WriteMemoryShards writes markdown shard files and an index.jsonl that maps threads -> shard files.
+// WriteMemoryShards writes markdown shard files and an index.json that maps threads -> shard files.
 // Thread summaries are packed sequentially into shard files of roughly MaxBytes (UTF-8 bytes).
 func WriteMemoryShards(threadSummaries []ThreadSummary, opts MemoryPackOptions) ([]MemoryShardIndexRecord, error) {
 	if opts.OutDir == "" {
