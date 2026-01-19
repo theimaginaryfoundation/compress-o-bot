@@ -8,7 +8,7 @@ ChatGPT/OpenAI conversation archive compressor.
 - Chunk each thread into summarizer-ready slices
 - Summarize each chunk (semantic + sentiment) and build indices
 - Roll up chunk summaries into per-thread summaries
-- Pack thread summaries into markdown shard files + a JSONL index
+- Pack thread summaries into markdown shard files + a JSON index
 
 ### Requirements
 - Go (recent version recommended)
@@ -75,7 +75,7 @@ go run ./cmd/memory-pack -mode sentiment  -in docs/peanut-gallery/threads/thread
   - `-sentiment-model`: sentiment summary model override (common to run heavier here).
   - `-sentiment-prompt-file`: custom sentiment prompt header file.
   - `-resume`: skip chunks that already have both semantic+sentiment outputs.
-  - `-reindex`: rebuild `index.jsonl`/`sentiment_index.jsonl` from outputs at the end.
+  - `-reindex`: rebuild `index.json`/`sentiment_index.json` from outputs at the end.
   - `-glossary`, `-glossary-max-terms`, `-glossary-min-count`: glossary persistence and prompt sizing.
 
 - **`cmd/thread-rollup`** (chunk summaries → per-thread summaries; uses OpenAI)
@@ -85,7 +85,7 @@ go run ./cmd/memory-pack -mode sentiment  -in docs/peanut-gallery/threads/thread
   - `-model` / `-sentiment-model`: semantic vs sentiment rollup models.
   - `-resume`, `-reindex`, `-max-chunks-per-thread`: control reruns and splitting large threads into parts.
 
-- **`cmd/memory-pack`** (thread summaries → markdown shards + JSONL index)
+- **`cmd/memory-pack`** (thread summaries → markdown shards + JSON index)
   - `-mode`: `semantic` or `sentiment`.
   - `-in`, `-out`: input thread summary dir and output shard dir.
   - `-max-bytes`: target shard size (UTF-8 bytes).
@@ -96,7 +96,7 @@ go run ./cmd/memory-pack -mode sentiment  -in docs/peanut-gallery/threads/thread
   - `chunks/`: chunk JSON files
   - `summaries/`: per-chunk semantic + sentiment summaries + indices
   - `thread_summaries/` and `thread_sentiment_summaries/`: per-thread rollups
-  - `memory_shards/` and `memory_shards_sentiment/`: markdown shard files + `*_memory_index.jsonl`
+  - `memory_shards/` and `memory_shards_sentiment/`: markdown shard files + `*_memory_index.json`
 
 ### Notes
 - The AI stages are designed to be resumable; see each command’s flags (`-resume`, `-overwrite`, etc.).
