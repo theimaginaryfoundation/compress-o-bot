@@ -9,6 +9,14 @@
 *.test
 *.out
 
+# Stray binaries from `go build ./cmd/X` run at repo root
+/archive-splitter
+/archive-pipeline
+/chunk-summarizer
+/memory-pack
+/thread-chunker
+/thread-rollup
+
 # Go workspaces
 go.work
 go.work.sum

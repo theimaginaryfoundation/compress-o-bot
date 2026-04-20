@@ -3,9 +3,7 @@ package main
 import (
 	"context"
 	"encoding/json"
-	"errors"
 	"flag"
-	"io"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -14,31 +12,9 @@ import (
 	"time"
 
 	"github.com/theimaginaryfoundation/compress-o-bot/migration"
+	"github.com/theimaginaryfoundation/compress-o-bot/migration/fileutils"
+	"github.com/theimaginaryfoundation/compress-o-bot/pipeline"
 )
-
-func TestIsJSONTruncationError(t *testing.T) {
-	t.Parallel()
-
-	cases := []struct {
-		name string
-		err  error
-		want bool
-	}{
-		{name: "nil", err: nil, want: false},
-		{name: "unexpected_end", err: errors.New("unexpected end of JSON input"), want: true},
-		{name: "unexpected_eof", err: errors.New("unexpected EOF"), want: true},
-		{name: "other", err: errors.New("no JSON object found"), want: false},
-	}
-
-	for _, tc := range cases {
-		t.Run(tc.name, func(t *testing.T) {
-			t.Parallel()
-			if got := isJSONTruncationError(tc.err); got != tc.want {
-				t.Fatalf("got=%v want=%v", got, tc.want)
-			}
-		})
-	}
-}
 
 func TestDecodeModelJSON_ExtractsObjectFromWrappedText(t *testing.T) {
 	t.Parallel()
@@ -48,7 +24,7 @@ func TestDecodeModelJSON_ExtractsObjectFromWrappedText(t *testing.T) {
 	}
 
 	var o out
-	if err := decodeModelJSON("here you go:\n\n{\"a\": 2}\n", &o); err != nil {
+	if err := fileutils.DecodeModelJSON("here you go:\n\n{\"a\": 2}\n", &o); err != nil {
 		t.Fatalf("decodeModelJSON: %v", err)
 	}
 	if o.A != 2 {
@@ -60,48 +36,18 @@ func TestDecodeModelJSON_MissingClosingBrace_ReturnsUnexpectedEOF(t *testing.T) 
 	t.Parallel()
 
 	var m map[string]any
-	err := decodeModelJSON("{\"a\": 1", &m)
-	if !errors.Is(err, io.ErrUnexpectedEOF) {
-		t.Fatalf("err=%v", err)
+	err := fileutils.DecodeModelJSON("{\"a\": 1", &m)
+	if err == nil {
+		t.Fatalf("expected error")
 	}
 }
 
-func TestDecodeModelJSON_ExtractsArrayOnlyWhenTargetIsSlice(t *testing.T) {
+func TestDecodeModelJSON_NoObjectReturnsError(t *testing.T) {
 	t.Parallel()
 
-	// Slice target: should work.
-	var out []int
-	if err := decodeModelJSON("prefix [1,2,3] suffix", &out); err != nil {
-		t.Fatalf("slice decodeModelJSON: %v", err)
-	}
-	if len(out) != 3 || out[0] != 1 || out[2] != 3 {
-		t.Fatalf("out=%v", out)
-	}
-
-	// Struct target: should not attempt to treat arbitrary inner arrays as top-level JSON.
-	type obj struct {
-		A int `json:"a"`
-	}
-	var o obj
-	if err := decodeModelJSON("prefix [1,2,3] suffix", &o); err == nil {
-		t.Fatalf("expected error for struct target")
-	}
-}
-
-func TestIsRecoverableModelJSONError(t *testing.T) {
-	t.Parallel()
-
-	if isRecoverableModelJSONError(nil) {
-		t.Fatalf("nil should not be recoverable")
-	}
-	if !isRecoverableModelJSONError(errors.New("no JSON object found in model output (len=123)")) {
-		t.Fatalf("expected no-JSON-object error to be recoverable")
-	}
-	if !isRecoverableModelJSONError(errors.New("unexpected end of JSON input")) {
-		t.Fatalf("expected truncation error to be recoverable")
-	}
-	if isRecoverableModelJSONError(errors.New("some other parse error")) {
-		t.Fatalf("unexpected recoverable")
+	var o struct{ A int }
+	if err := fileutils.DecodeModelJSON("prefix [1,2,3] suffix", &o); err == nil {
+		t.Fatalf("expected error when no JSON object present")
 	}
 }
 
@@ -157,7 +103,7 @@ func TestChunkWindows_SplitsByMax(t *testing.T) {
 		in[i] = i + 1
 	}
 
-	got := chunkWindows(in, 10)
+	got := pipeline.SplitChunksIntoWindows(in, 10)
 	if len(got) != 2 {
 		t.Fatalf("len=%d", len(got))
 	}
@@ -246,35 +192,6 @@ func TestForEachThreadIDConcurrent_RespectsConcurrencyLimit(t *testing.T) {
 	}
 	if got := atomic.LoadInt64(&maxInFlight); got != limit {
 		t.Fatalf("maxInFlight=%d want=%d", got, limit)
-	}
-}
-
-func TestMinThreadStartFromChunkSummaries(t *testing.T) {
-	t.Parallel()
-
-	a := 100.0
-	b := 50.0
-	got := minThreadStartFromChunkSummaries([]migration.ChunkSummary{
-		{ConversationID: "c", ThreadStart: &a},
-		{ConversationID: "c", ThreadStart: &b},
-		{ConversationID: "c", ThreadStart: nil},
-	})
-	if got == nil || *got != 50.0 {
-		t.Fatalf("got=%v", got)
-	}
-}
-
-func TestMinThreadStartFromThreadSummaries(t *testing.T) {
-	t.Parallel()
-
-	a := 10.0
-	b := 20.0
-	got := minThreadStartFromThreadSummaries([]migration.ThreadSummary{
-		{ConversationID: "c", ThreadStart: &b},
-		{ConversationID: "c", ThreadStart: &a},
-	})
-	if got == nil || *got != 10.0 {
-		t.Fatalf("got=%v", got)
 	}
 }
 

@@ -2,8 +2,6 @@ package main
 
 import (
 	"context"
-	"encoding/json"
-	"errors"
 	"flag"
 	"fmt"
 	"io/fs"
@@ -16,10 +14,8 @@ import (
 
 	"github.com/openai/openai-go"
 	"github.com/openai/openai-go/option"
-	"github.com/openai/openai-go/responses"
 	"github.com/theimaginaryfoundation/compress-o-bot/migration"
-	"github.com/theimaginaryfoundation/compress-o-bot/migration/fileutils"
-	"github.com/theimaginaryfoundation/compress-o-bot/migration/provider"
+	"github.com/theimaginaryfoundation/compress-o-bot/pipeline"
 )
 
 func main() {
@@ -46,9 +42,9 @@ func main() {
 	defer stop()
 
 	client := openai.NewClient(option.WithAPIKey(apiKey))
-	decider := openAIBreakpointDecider{
-		client: &client,
-		model:  cfg.Model,
+	decider := &pipeline.OpenAIBreakpointDecider{
+		Client: &client,
+		Model:  cfg.Model,
 	}
 
 	inputFiles, err := collectInputFiles(cfg.InputPath)
@@ -64,7 +60,6 @@ func main() {
 	start := time.Now()
 	var allWritten []string
 	for i, inFile := range inputFiles {
-		// To avoid filename collisions across threads (same thread_start_time), create a per-thread subdir.
 		threadSubdir := filepath.Join(cfg.OutputDir, strings.TrimSuffix(filepath.Base(inFile), filepath.Ext(inFile)))
 
 		written, err := migration.ChunkThread(ctx, inFile, decider, cfg.TargetTurns, migration.ChunkOptions{
@@ -78,7 +73,6 @@ func main() {
 		}
 		allWritten = append(allWritten, written...)
 
-		// Progress logging: this can take a long time and is otherwise mostly silent.
 		fmt.Fprintf(os.Stderr, "progress thread-chunker: %d/%d threads chunked (last=%s chunks=%d elapsed=%s)\n",
 			i+1, len(inputFiles), filepath.Base(inFile), len(written), time.Since(start).Round(time.Second))
 	}
@@ -137,10 +131,6 @@ func collectInputFiles(inputPath string) ([]string, error) {
 	var files []string
 	for _, e := range entries {
 		if e.IsDir() {
-			// Common: docs/peanut-gallery/threads/chunks/ exists alongside threads. Skip it.
-			if strings.EqualFold(e.Name(), "chunks") {
-				continue
-			}
 			continue
 		}
 		name := e.Name()
@@ -161,7 +151,6 @@ func collectInputFiles(inputPath string) ([]string, error) {
 }
 
 func sortStrings(s []string) {
-	// small local sort to avoid importing sort just for one call
 	for i := 0; i < len(s); i++ {
 		for j := i + 1; j < len(s); j++ {
 			if s[j] < s[i] {
@@ -169,136 +158,4 @@ func sortStrings(s []string) {
 			}
 		}
 	}
-}
-
-type openAIBreakpointDecider struct {
-	client *openai.Client
-	model  string
-}
-
-type breakpointRequest struct {
-	ConversationID      string            `json:"conversation_id"`
-	Title               string            `json:"title,omitempty"`
-	TargetTurnsPerChunk int               `json:"target_turns_per_chunk"`
-	TotalTurns          int               `json:"total_turns"`
-	Turns               []turnForDecision `json:"turns"`
-}
-
-type turnForDecision struct {
-	Turn      int      `json:"turn"`
-	StartTime *float64 `json:"start_time,omitempty"`
-	User      string   `json:"user,omitempty"`
-	Assistant string   `json:"assistant,omitempty"`
-}
-
-type breakpointResponse struct {
-	Breakpoints []int `json:"breakpoints"`
-}
-
-var breakpointSchema = provider.GenerateSchema[breakpointResponse]()
-
-func (d openAIBreakpointDecider) DecideBreakpoints(ctx context.Context, thread migration.SimplifiedConversation, turns []migration.Turn, targetTurnsPerChunk int) ([]int, error) {
-	if d.client == nil {
-		return nil, errors.New("openAIBreakpointDecider: client is nil")
-	}
-	if d.model == "" {
-		return nil, errors.New("openAIBreakpointDecider: model is empty")
-	}
-
-	payload, err := buildBreakpointRequestPayload(thread, turns, targetTurnsPerChunk)
-	if err != nil {
-		return nil, err
-	}
-
-	format := responses.ResponseFormatTextConfigUnionParam{
-		OfJSONSchema: &responses.ResponseFormatTextJSONSchemaConfigParam{
-			Name:        "TurnBreakpoints",
-			Schema:      breakpointSchema,
-			Strict:      openai.Bool(true),
-			Description: openai.String("Turn breakpoints JSON"),
-			Type:        "json_schema",
-		},
-	}
-
-	instructions := chunkBreakpointsPrompt
-	input := []responses.ResponseInputItemUnionParam{
-		responses.ResponseInputItemParamOfMessage(string(payload), responses.EasyInputMessageRoleUser),
-	}
-	params := responses.ResponseNewParams{
-		Model:           d.model,
-		MaxOutputTokens: openai.Int(1500),
-		Instructions:    openai.String(instructions),
-		ServiceTier:     responses.ResponseNewParamsServiceTierFlex,
-		Input: responses.ResponseNewParamsInputUnion{
-			OfInputItemList: input,
-		},
-		Text: responses.ResponseTextConfigParam{
-			Format: format,
-		},
-	}
-
-	resp, err := provider.CallWithRetry(ctx, d.client, params)
-	if err != nil {
-		return nil, err
-	}
-
-	var out breakpointResponse
-	if err := fileutils.DecodeModelJSON(resp.OutputText(), &out); err != nil {
-		// If the model output is truncated/invalid, fall back to deterministic breakpoints so the pipeline keeps moving.
-		// This will typically produce ~targetTurnsPerChunk chunks.
-		return fallbackBreakpoints(len(turns), targetTurnsPerChunk), nil
-	}
-	return out.Breakpoints, nil
-}
-
-func buildBreakpointRequestPayload(thread migration.SimplifiedConversation, turns []migration.Turn, targetTurnsPerChunk int) ([]byte, error) {
-	// First attempt: include light text snippets.
-	payload, err := json.Marshal(buildBreakpointRequest(thread, turns, targetTurnsPerChunk, true))
-	if err != nil {
-		return nil, err
-	}
-
-	// If the thread is huge, the request itself can exceed context limits. In that case, drop text entirely
-	// (omitempty will remove user/assistant) and rely on structure-only segmentation.
-	const maxRequestBytes = 250_000
-	const maxTurnsWithText = 250
-	if len(payload) > maxRequestBytes || len(turns) > maxTurnsWithText {
-		return json.Marshal(buildBreakpointRequest(thread, turns, targetTurnsPerChunk, false))
-	}
-
-	return payload, nil
-}
-
-func buildBreakpointRequest(thread migration.SimplifiedConversation, turns []migration.Turn, targetTurnsPerChunk int, includeText bool) breakpointRequest {
-	req := breakpointRequest{
-		ConversationID:      thread.ConversationID,
-		Title:               thread.Title,
-		TargetTurnsPerChunk: targetTurnsPerChunk,
-		TotalTurns:          len(turns),
-		Turns:               make([]turnForDecision, 0, len(turns)),
-	}
-
-	for _, t := range turns {
-		td := turnForDecision{
-			Turn:      t.TurnIndex,
-			StartTime: t.StartTime,
-		}
-		if includeText {
-			td.User = fileutils.Truncate(t.UserText, 400)
-			td.Assistant = fileutils.Truncate(t.AssistantText, 600)
-		}
-		req.Turns = append(req.Turns, td)
-	}
-	return req
-}
-
-func fallbackBreakpoints(totalTurns int, targetTurnsPerChunk int) []int {
-	if targetTurnsPerChunk <= 0 || totalTurns <= targetTurnsPerChunk {
-		return nil
-	}
-	var bps []int
-	for i := targetTurnsPerChunk; i < totalTurns; i += targetTurnsPerChunk {
-		bps = append(bps, i)
-	}
-	return bps
 }
