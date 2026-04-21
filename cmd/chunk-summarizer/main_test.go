@@ -6,6 +6,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/theimaginaryfoundation/compress-o-bot/pipeline"
 )
 
 func TestParseFlags_Overrides(t *testing.T) {
@@ -69,7 +71,7 @@ func TestLoadPromptHeaderFromFile(t *testing.T) {
 func TestComposeSentimentInstructions_AppendsRequiredTail(t *testing.T) {
 	t.Parallel()
 
-	got := composeSentimentInstructions("custom header")
+	got := pipeline.ComposeSentimentInstructions("custom header")
 	if !strings.HasPrefix(got, "custom header") {
 		t.Fatalf("missing header prefix: %q", got[:min(40, len(got))])
 	}

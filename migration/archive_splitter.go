@@ -199,6 +199,141 @@ func SplitConversationArchive(ctx context.Context, inputPath, outputDir string, 
 	}
 }
 
+// ReaderSplitOptions controls SplitConversationArchiveFromReader.
+type ReaderSplitOptions struct {
+	// ArrayField is the JSON field name that contains the conversation array
+	// when the top-level JSON value is an object. If empty, the first array
+	// field is used automatically.
+	ArrayField string
+}
+
+// SplitConversationArchiveFromReader reads r and returns all simplified conversations in memory,
+// without writing any files to disk.
+func SplitConversationArchiveFromReader(ctx context.Context, r io.Reader, opts ReaderSplitOptions) ([]SimplifiedConversation, error) {
+	if ctx == nil {
+		return nil, errors.New("SplitConversationArchiveFromReader: ctx is nil")
+	}
+	if r == nil {
+		return nil, errors.New("SplitConversationArchiveFromReader: r is nil")
+	}
+
+	dec := json.NewDecoder(bufio.NewReaderSize(r, 1<<20))
+	dec.UseNumber()
+
+	tok, err := dec.Token()
+	if err != nil {
+		return nil, fmt.Errorf("SplitConversationArchiveFromReader: read first token: %w", err)
+	}
+
+	delim, ok := tok.(json.Delim)
+	if !ok {
+		return nil, fmt.Errorf("SplitConversationArchiveFromReader: expected JSON array/object, got %T", tok)
+	}
+
+	switch delim {
+	case '[':
+		convs, err := splitArrayToSlice(ctx, dec)
+		if err != nil {
+			return nil, err
+		}
+		if tok, err := dec.Token(); err != nil {
+			return nil, fmt.Errorf("SplitConversationArchiveFromReader: read closing token: %w", err)
+		} else if d, ok := tok.(json.Delim); !ok || d != ']' {
+			return nil, fmt.Errorf("SplitConversationArchiveFromReader: expected ']', got %v", tok)
+		}
+		return convs, nil
+
+	case '{':
+		foundArray := false
+		var convs []SimplifiedConversation
+		for dec.More() {
+			select {
+			case <-ctx.Done():
+				return nil, ctx.Err()
+			default:
+			}
+
+			keyTok, err := dec.Token()
+			if err != nil {
+				return nil, fmt.Errorf("SplitConversationArchiveFromReader: read key: %w", err)
+			}
+			key, ok := keyTok.(string)
+			if !ok {
+				return nil, fmt.Errorf("SplitConversationArchiveFromReader: expected string key, got %T", keyTok)
+			}
+
+			valTok, err := dec.Token()
+			if err != nil {
+				return nil, fmt.Errorf("SplitConversationArchiveFromReader: read value for key %q: %w", key, err)
+			}
+
+			isTarget := opts.ArrayField != "" && key == opts.ArrayField
+			if !isTarget && opts.ArrayField == "" && !foundArray {
+				if d, ok := valTok.(json.Delim); ok && d == '[' {
+					isTarget = true
+				}
+			}
+
+			if isTarget {
+				d, ok := valTok.(json.Delim)
+				if !ok || d != '[' {
+					return nil, fmt.Errorf("SplitConversationArchiveFromReader: key %q is not an array", key)
+				}
+				foundArray = true
+				convs, err = splitArrayToSlice(ctx, dec)
+				if err != nil {
+					return nil, err
+				}
+				if tok, err := dec.Token(); err != nil {
+					return nil, fmt.Errorf("SplitConversationArchiveFromReader: read closing ']': %w", err)
+				} else if d, ok := tok.(json.Delim); !ok || d != ']' {
+					return nil, fmt.Errorf("SplitConversationArchiveFromReader: expected ']', got %v", tok)
+				}
+				continue
+			}
+
+			if err := skipValue(dec, valTok); err != nil {
+				return nil, fmt.Errorf("SplitConversationArchiveFromReader: skip key %q: %w", key, err)
+			}
+		}
+		if tok, err := dec.Token(); err != nil {
+			return nil, fmt.Errorf("SplitConversationArchiveFromReader: read closing '}': %w", err)
+		} else if d, ok := tok.(json.Delim); !ok || d != '}' {
+			return nil, fmt.Errorf("SplitConversationArchiveFromReader: expected '}', got %v", tok)
+		}
+		if !foundArray {
+			return nil, errors.New("SplitConversationArchiveFromReader: no conversations array found in top-level object")
+		}
+		return convs, nil
+
+	default:
+		return nil, fmt.Errorf("SplitConversationArchiveFromReader: unsupported top-level delimiter %q", delim)
+	}
+}
+
+func splitArrayToSlice(ctx context.Context, dec *json.Decoder) ([]SimplifiedConversation, error) {
+	var convs []SimplifiedConversation
+	for dec.More() {
+		select {
+		case <-ctx.Done():
+			return nil, ctx.Err()
+		default:
+		}
+
+		var raw json.RawMessage
+		if err := dec.Decode(&raw); err != nil {
+			return nil, fmt.Errorf("SplitConversationArchiveFromReader: decode element: %w", err)
+		}
+
+		conv, _, err := simplifyConversation(raw)
+		if err != nil {
+			return nil, err
+		}
+		convs = append(convs, conv)
+	}
+	return convs, nil
+}
+
 func splitArrayFromOpen(ctx context.Context, dec *json.Decoder, outputDir string, opts SplitOptions, seen map[string]int, res *SplitResult) error {
 	for dec.More() {
 		select {

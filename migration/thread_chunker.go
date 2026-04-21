@@ -223,6 +223,50 @@ func ChunkThread(ctx context.Context, threadPath string, decider BreakpointDecid
 	return written, nil
 }
 
+// ChunkThreadInMemory builds chunks from an in-memory SimplifiedConversation without any file I/O.
+// It is the pure in-memory equivalent of ChunkThread.
+func ChunkThreadInMemory(ctx context.Context, thread SimplifiedConversation, decider BreakpointDecider, targetTurnsPerChunk int) ([]Chunk, error) {
+	if ctx == nil {
+		return nil, errors.New("ChunkThreadInMemory: ctx is nil")
+	}
+	if decider == nil {
+		return nil, errors.New("ChunkThreadInMemory: decider is nil")
+	}
+	if targetTurnsPerChunk <= 0 {
+		return nil, errors.New("ChunkThreadInMemory: targetTurnsPerChunk must be > 0")
+	}
+
+	turns := BuildTurns(thread)
+	if len(turns) == 0 {
+		return nil, errors.New("ChunkThreadInMemory: thread has no messages/turns")
+	}
+
+	breakpoints, err := decider.DecideBreakpoints(ctx, thread, turns, targetTurnsPerChunk)
+	if err != nil {
+		return nil, fmt.Errorf("ChunkThreadInMemory: decide breakpoints: %w", err)
+	}
+	if len(breakpoints) == 0 {
+		breakpoints = fallbackBreakpoints(len(turns), targetTurnsPerChunk)
+	}
+
+	chunks, err := ApplyTurnBreakpoints(thread, turns, breakpoints)
+	if err != nil {
+		return nil, err
+	}
+
+	threadStart := threadStartTime(thread)
+	for i := range chunks {
+		chunks[i].ChunkNumber = i + 1
+		chunks[i].ThreadStart = threadStart
+	}
+	return chunks, nil
+}
+
+// FallbackBreakpoints returns evenly-spaced breakpoints when the AI model cannot decide.
+func FallbackBreakpoints(totalTurns int, targetTurnsPerChunk int) []int {
+	return fallbackBreakpoints(totalTurns, targetTurnsPerChunk)
+}
+
 func threadStartTime(thread SimplifiedConversation) *float64 {
 	if thread.CreateTime != nil {
 		return thread.CreateTime
